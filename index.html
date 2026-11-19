@@ -73,10 +73,18 @@
     </section>
     <p class="print-only signature">Подпись ____________________</p>
     <div class="print-actions">
+      <button type="button" id="new-estimate" class="add-button">Новая смета</button>
+      <button type="button" id="copy-whatsapp" class="add-button">Скопировать для WhatsApp</button>
       <button type="button" id="save-pdf" class="print-button">Сохранить PDF</button>
       <p>В окне печати выберите «Сохранить как PDF».</p>
     </div>
-    <p class="privacy-note">Данные остаются в вашем браузере. При обновлении страницы смета очистится.</p>
+    <p id="copy-status" class="copy-status screen-only" role="status" aria-live="polite"></p>
+    <section id="copy-fallback" class="card copy-fallback screen-only" hidden>
+      <label for="share-text">Скопируйте текст вручную</label>
+      <p id="copy-help">Автоматическое копирование недоступно. Выделите текст и скопируйте его через Ctrl+C или меню телефона.</p>
+      <textarea id="share-text" rows="9" readonly aria-describedby="copy-help"></textarea>
+    </section>
+    <p id="draft-status" class="privacy-note" role="status">Черновик сохраняется в этом браузере. Данные никуда не отправляются.</p>
   </main>
 
   <template id="item-template">

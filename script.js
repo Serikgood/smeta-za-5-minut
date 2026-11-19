@@ -8,6 +8,11 @@ const discountInput = document.querySelector("#discount-rate");
 const vatInput = document.querySelector("#vat-rate");
 const currencyInput = document.querySelector("#currency");
 const moneyFormatter = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
+const draftKey = "smeta-draft-v1";
+const fieldIds = ["sender", "recipient", "estimate-number", "estimate-date", "discount-rate", "vat-rate", "currency", "comment"];
+const rowFields = ["name", "quantity", "unit", "price"];
+let isInitializing = true;
+let copyStatusTimer;
 
 // Принимаем десятичную запятую и пробелы между группами тысяч.
 function parseNumber(value) {
@@ -64,11 +69,15 @@ function updateCurrency() {
   recalculate();
 }
 
-function addItem(focus = true) {
+function addItem(focus = true, values = null) {
   const row = template.content.firstElementChild.cloneNode(true);
+  if (values) {
+    for (const field of rowFields) row.querySelector(`[data-field="${field}"]`).value = values[field];
+  }
   items.append(row);
   if (focus) row.querySelector('[data-field="name"]').focus();
   updateCurrency();
+  saveDraft();
 }
 
 addButton.addEventListener("click", () => addItem());
@@ -83,6 +92,7 @@ items.addEventListener("click", (event) => {
   const nextRow = row.nextElementSibling || row.previousElementSibling;
   row.remove();
   recalculate();
+  saveDraft();
   if (nextRow) nextRow.querySelector('[data-field="name"]').focus();
   else addButton.focus();
 });
@@ -96,24 +106,19 @@ items.addEventListener("keydown", (event) => {
   addItem();
 });
 
-const today = new Date();
-document.querySelector("#estimate-date").value = [
-  today.getFullYear(),
-  String(today.getMonth() + 1).padStart(2, "0"),
-  String(today.getDate()).padStart(2, "0"),
-].join("-");
-
-addItem(false);
-
-// Текстовые копии не обрезаются шириной полей и сохраняют переносы при печати.
-function preparePrint() {
-  recalculate();
+function getEstimateTitle() {
   const number = document.querySelector("#estimate-number").value.trim() || "—";
   const date = document.querySelector("#estimate-date").value;
   const formattedDate = /^\d{4}-\d{2}-\d{2}$/.test(date)
     ? date.split("-").reverse().join(".")
     : "—";
-  document.querySelector("#print-title").textContent = `Смета № ${number} от ${formattedDate}`;
+  return `Смета № ${number} от ${formattedDate}`;
+}
+
+// Текстовые копии не обрезаются шириной полей и сохраняют переносы при печати.
+function preparePrint() {
+  recalculate();
+  document.querySelector("#print-title").textContent = getEstimateTitle();
 
   const controls = document.querySelectorAll(".details-grid input, #items input, #items select, #comment");
   for (const control of controls) {
@@ -133,3 +138,137 @@ document.querySelector("#save-pdf").addEventListener("click", () => {
   window.print();
 });
 window.addEventListener("beforeprint", preparePrint);
+
+function todayValue() {
+  const today = new Date();
+  return [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"), String(today.getDate()).padStart(2, "0")].join("-");
+}
+
+function readDraft() {
+  const fields = Object.fromEntries(fieldIds.map(id => [id, document.getElementById(id).value]));
+  const positions = Array.from(items.rows, row => Object.fromEntries(
+    rowFields.map(field => [field, row.querySelector(`[data-field="${field}"]`).value])
+  ));
+  return { version: 1, fields, positions };
+}
+
+function saveDraft() {
+  if (isInitializing) return;
+  const status = document.querySelector("#draft-status");
+  try {
+    window.localStorage.setItem(draftKey, JSON.stringify(readDraft()));
+    status.textContent = "Черновик сохраняется в этом браузере. Данные никуда не отправляются.";
+  } catch {
+    status.textContent = "Не удалось сохранить черновик: хранилище браузера недоступно или заполнено. Сохраните смету в PDF или скопируйте текст.";
+  }
+}
+
+function restoreDraft() {
+  try {
+    const saved = window.localStorage.getItem(draftKey);
+    if (saved === null) return false;
+    const draft = JSON.parse(saved);
+    if (!draft || draft.version !== 1 || !draft.fields || !Array.isArray(draft.positions)
+      || !fieldIds.every(id => typeof draft.fields[id] === "string")
+      || !["₸", "₽", "$", "€"].includes(draft.fields.currency)
+      || !draft.positions.every(row => row && rowFields.every(field => typeof row[field] === "string")
+        && ["шт", "час", "услуга"].includes(row.unit))) {
+      throw new Error("Неверный формат черновика");
+    }
+    for (const id of fieldIds) document.getElementById(id).value = draft.fields[id];
+    for (const position of draft.positions) addItem(false, position);
+    updateCurrency();
+    return true;
+  } catch {
+    document.querySelector("#draft-status").textContent = "Не удалось восстановить черновик. Хранилище недоступно или сохранённые данные повреждены.";
+    return false;
+  }
+}
+
+function resetEstimate(number) {
+  for (const id of fieldIds) document.getElementById(id).value = "";
+  document.querySelector("#estimate-number").value = number;
+  document.querySelector("#estimate-date").value = todayValue();
+  discountInput.value = "0";
+  vatInput.value = "0";
+  currencyInput.value = "₸";
+  items.replaceChildren();
+  addItem(false);
+}
+
+document.querySelector("#new-estimate").addEventListener("click", () => {
+  if (!window.confirm("Создать новую смету? Текущий черновик будет заменён пустой сметой.")) return;
+  const current = document.querySelector("#estimate-number").value.trim();
+  // Сохраняем префикс и ведущие нули, например КП-009 → КП-010.
+  const nextNumber = /\d+$/.test(current)
+    ? current.replace(/\d+$/, digits => String(BigInt(digits) + 1n).padStart(digits.length, "0"))
+    : "1";
+  resetEstimate(nextNumber);
+  clearCopyFeedback();
+  document.querySelector("#sender").focus();
+});
+
+function buildShareText() {
+  recalculate();
+  const lines = [getEstimateTitle()];
+  for (const [id, label] of [["sender", "От кого"], ["recipient", "Для кого"]]) {
+    const value = document.getElementById(id).value.trim();
+    if (value) lines.push(`${label}: ${value}`);
+  }
+  lines.push("");
+  for (const row of items.rows) {
+    const value = field => row.querySelector(`[data-field="${field}"]`).value;
+    const name = value("name").trim() || "Без наименования";
+    const quantity = String(parseNumber(value("quantity"))).replace(".", ",");
+    const price = formatMoney(parseNumber(value("price")));
+    const amount = row.querySelector('[data-field="amount"]').textContent;
+    lines.push(`• ${name} — ${quantity} ${value("unit")} × ${price} = ${amount}`);
+  }
+  lines.push("", "Сумма: " + document.querySelector("#subtotal").textContent);
+  for (const [rowId, outputId, label] of [
+    ["#discount-row", "#discount-amount", "Скидка"],
+    ["#discounted-row", "#discounted-amount", "Сумма со скидкой"],
+    ["#vat-row", "#vat-amount", "НДС"],
+  ]) {
+    if (!document.querySelector(rowId).hidden) lines.push(label + ": " + document.querySelector(outputId).textContent);
+  }
+  lines.push("Итого к оплате: " + totalOutput.textContent);
+  const comment = document.querySelector("#comment").value.trim();
+  if (comment) lines.push("", "Комментарий: " + comment);
+  return lines.join("\n");
+}
+
+function clearCopyFeedback() {
+  window.clearTimeout(copyStatusTimer);
+  document.querySelector("#copy-status").textContent = "";
+  document.querySelector("#copy-fallback").hidden = true;
+  document.querySelector("#share-text").value = "";
+}
+
+document.querySelector("#copy-whatsapp").addEventListener("click", async () => {
+  clearCopyFeedback();
+  const text = buildShareText();
+  try {
+    await navigator.clipboard.writeText(text);
+    document.querySelector("#copy-status").textContent = "Скопировано ✓";
+    copyStatusTimer = window.setTimeout(() => {
+      document.querySelector("#copy-status").textContent = "";
+    }, 2000);
+  } catch {
+    document.querySelector("#copy-fallback").hidden = false;
+    const field = document.querySelector("#share-text");
+    field.value = text;
+    field.focus();
+    field.select();
+  }
+});
+
+// Делегирование охватывает реквизиты, комментарий и динамические строки.
+for (const eventName of ["input", "change"]) {
+  document.querySelector("main").addEventListener(eventName, event => {
+    if (event.target.matches("input, select, textarea") && event.target.id !== "share-text") saveDraft();
+  });
+}
+
+if (!restoreDraft()) resetEstimate("1");
+isInitializing = false;
