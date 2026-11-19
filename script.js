@@ -104,3 +104,32 @@ document.querySelector("#estimate-date").value = [
 ].join("-");
 
 addItem(false);
+
+// Текстовые копии не обрезаются шириной полей и сохраняют переносы при печати.
+function preparePrint() {
+  recalculate();
+  const number = document.querySelector("#estimate-number").value.trim() || "—";
+  const date = document.querySelector("#estimate-date").value;
+  const formattedDate = /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? date.split("-").reverse().join(".")
+    : "—";
+  document.querySelector("#print-title").textContent = `Смета № ${number} от ${formattedDate}`;
+
+  const controls = document.querySelectorAll(".details-grid input, #items input, #items select, #comment");
+  for (const control of controls) {
+    let text = control.nextElementSibling;
+    if (!text || !text.classList.contains("print-value")) {
+      text = document.createElement("span");
+      text.className = "print-value";
+      text.setAttribute("aria-hidden", "true");
+      control.after(text);
+    }
+    text.textContent = control.value;
+  }
+}
+
+document.querySelector("#save-pdf").addEventListener("click", () => {
+  preparePrint();
+  window.print();
+});
+window.addEventListener("beforeprint", preparePrint);

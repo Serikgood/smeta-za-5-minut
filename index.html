@@ -9,6 +9,7 @@
 </head>
 <body>
   <main class="container">
+    <h1 id="print-title" class="print-only"></h1>
     <header class="page-header">
       <span class="eyebrow">ПРОСТО И ПО ДЕЛУ</span>
       <h1>Смета за 5 минут</h1>
@@ -20,8 +21,8 @@
       <div class="details-grid">
         <label>От кого<input type="text" id="sender" placeholder="Ваше имя или компания"></label>
         <label>Для кого<input type="text" id="recipient" placeholder="Имя клиента или компания"></label>
-        <label>Номер сметы<input type="text" id="estimate-number" placeholder="Например, 001"></label>
-        <label>Дата<input type="date" id="estimate-date"></label>
+        <label class="screen-only">Номер сметы<input type="text" id="estimate-number" placeholder="Например, 001"></label>
+        <label class="screen-only">Дата<input type="date" id="estimate-date"></label>
       </div>
     </section>
 
@@ -66,6 +67,15 @@
       <h2 id="total-title">Итого к оплате</h2>
       <output id="total" aria-live="polite" aria-atomic="true">0 ₸</output>
     </section>
+    <section class="card comment-card" aria-labelledby="comment-title">
+      <h2 id="comment-title"><label for="comment">Комментарий</label></h2>
+      <textarea id="comment" rows="3" placeholder="Сроки выполнения, условия оплаты и другие детали"></textarea>
+    </section>
+    <p class="print-only signature">Подпись ____________________</p>
+    <div class="print-actions">
+      <button type="button" id="save-pdf" class="print-button">Сохранить PDF</button>
+      <p>В окне печати выберите «Сохранить как PDF».</p>
+    </div>
     <p class="privacy-note">Данные остаются в вашем браузере. При обновлении страницы смета очистится.</p>
   </main>
 
