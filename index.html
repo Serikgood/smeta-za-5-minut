@@ -16,6 +16,8 @@
       <h1>Смета за 5 минут</h1>
       <p>Добавьте позиции — суммы и итог рассчитаются автоматически.</p>
       <button type="button" id="show-catalog" class="add-button catalog-entry">Каталог смет</button>
+      <button type="button" id="create-estimate" class="add-button catalog-entry">Новая смета</button>
+      <button type="button" id="repeat-estimate" class="add-button catalog-entry">Повторить смету</button>
     </header>
 
     <section class="card" aria-labelledby="details-title">
@@ -79,6 +81,7 @@
       <button type="button" id="new-estimate" class="add-button" title="Очистить смету и увеличить её номер">Очистить</button>
       <button type="button" id="copy-whatsapp" class="add-button">Скопировать для WhatsApp</button>
       <button type="button" id="save-pdf" class="print-button">Сохранить PDF</button>
+      <button type="button" id="print-estimate" class="print-button">Распечатать</button>
       <p>В окне печати выберите «Сохранить как PDF».</p>
     </div>
     <p id="copy-status" class="copy-status screen-only" role="status" aria-live="polite"></p>
@@ -99,36 +102,68 @@
         <button type="button" id="close-catalog" class="add-button catalog-entry">← Вернуться к смете</button>
       </header>
       <div class="card">
-        <div id="catalog-filters" class="catalog-filters">
+        <div class="catalog-tools">
+          <button type="button" id="toggle-search" class="add-button" aria-expanded="false" aria-controls="catalog-search-panel">Поиск</button>
+          <button type="button" id="toggle-sort" class="add-button" aria-expanded="false" aria-controls="catalog-sort-panel">Сортировка</button>
+        </div>
+        <div id="catalog-filters">
+        <div id="catalog-search-panel" class="catalog-filters catalog-search-fields" hidden>
+          <fieldset class="catalog-date-filter">
+            <legend>По дате</legend>
+            <label>Конкретная дата<input type="date" id="catalog-date"></label>
+            <label>Дата от<input type="date" id="catalog-from"></label>
+            <label>Дата до<input type="date" id="catalog-to"></label>
+          </fieldset>
           <label>По клиенту<input type="search" id="catalog-client" placeholder="Название или его часть"></label>
           <label>По номеру сметы<input type="search" id="catalog-number" placeholder="Номер или его часть"></label>
-          <label>Конкретная дата<input type="date" id="catalog-date"></label>
-          <label>Дата от<input type="date" id="catalog-from"></label>
-          <label>Дата до<input type="date" id="catalog-to"></label>
+        </div>
+        <div id="catalog-sort-panel" class="catalog-sort-controls" hidden>
           <label>Сортировка<select id="catalog-sort">
-            <option value="newest">Сначала новые</option>
-            <option value="date-desc">Дата: сначала поздние</option>
-            <option value="date-asc">Дата: сначала ранние</option>
             <option value="number-asc">Номер: по возрастанию</option>
+            <option value="newest">Сначала новые</option>
+            <option value="date-desc">По дате: сначала новые</option>
+            <option value="date-asc">По дате: сначала старые</option>
+            <option value="client-asc">По клиенту: А–Я</option>
+            <option value="client-desc">По клиенту: Я–А</option>
             <option value="number-desc">Номер: по убыванию</option>
             <option value="total-asc">Сумма: по возрастанию</option>
             <option value="total-desc">Сумма: по убыванию</option>
           </select></label>
         </div>
+        </div>
         <p class="catalog-help">Фильтры работают вместе. Суммы сортируются по числовому значению без пересчёта валют.</p>
         <p id="catalog-status" class="catalog-message" role="status" aria-live="polite"></p>
         <p id="catalog-count" class="catalog-help" role="status" aria-live="polite"></p>
-        <div class="catalog-table-scroll" role="region" aria-label="Сохранённые сметы" tabindex="0">
+        <div id="catalog-results" class="catalog-table-scroll" role="region" aria-label="Сохранённые сметы" tabindex="0" hidden>
           <table class="catalog-table">
             <caption class="sr-only">Каталог сохранённых смет</caption>
             <thead><tr><th scope="col">№ сметы</th><th scope="col">Дата</th><th scope="col">Для кого</th><th scope="col">Сумма</th><th scope="col">Действия</th></tr></thead>
             <tbody id="catalog-items"></tbody>
           </table>
         </div>
-        <p id="catalog-empty" class="catalog-empty" hidden>Сметы не найдены</p>
+        <p id="catalog-empty" class="catalog-empty">Сметы не найдены</p>
       </div>
     </section>
+    <section id="document-view" hidden aria-label="Просмотр сметы А4">
+      <div class="document-toolbar screen-only">
+        <button type="button" id="document-back" class="add-button">← Назад в каталог</button>
+        <button type="button" id="document-edit" class="add-button">Редактировать</button>
+        <button type="button" id="document-print" class="print-button">Распечатать</button>
+      </div>
+      <div class="document-scroll"><article id="estimate-document" class="document-sheet" aria-label="Смета" tabindex="-1"></article></div>
+    </section>
   </main>
+
+  <dialog id="repeat-dialog" class="duplicate-dialog screen-only" aria-labelledby="repeat-title">
+    <h2 id="repeat-title">Выберите смету для повторения</h2>
+    <label class="repeat-search">Номер сметы<input type="search" id="repeat-number" placeholder="Номер или его часть"></label>
+    <p id="repeat-status" role="status" class="catalog-help">Введите номер сметы</p>
+    <div id="repeat-results" class="repeat-results"></div>
+    <div class="duplicate-actions">
+      <button type="button" id="repeat-cancel" class="add-button">Отмена</button>
+      <button type="button" id="repeat-confirm" class="print-button" disabled>Повторить</button>
+    </div>
+  </dialog>
 
   <dialog id="duplicate-dialog" class="duplicate-dialog screen-only" aria-labelledby="duplicate-title" aria-describedby="duplicate-description">
     <div class="warning-icon" aria-hidden="true">⚠</div>

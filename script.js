@@ -22,6 +22,10 @@ const catalogKey = "smeta-catalog-v1";
 let catalog = [];
 let currentCatalogId = null;
 let catalogUnavailable = false;
+let previewDraft = null;
+let previewRecordId = null;
+let newEstimateBaseline = null;
+let repeatSelectedId = null;
 
 // Принимаем десятичную запятую и пробелы между группами тысяч.
 function parseNumber(value) {
@@ -211,20 +215,7 @@ function getEstimateTitle() {
 
 // Текстовые копии не обрезаются шириной полей и сохраняют переносы при печати.
 function preparePrint() {
-  recalculate();
-  document.querySelector("#print-title").textContent = getEstimateTitle();
-
-  const controls = document.querySelectorAll(".details-grid input, #items input, #items select, #comment");
-  for (const control of controls) {
-    let text = control.nextElementSibling;
-    if (!text || !text.classList.contains("print-value")) {
-      text = document.createElement("span");
-      text.className = "print-value";
-      text.setAttribute("aria-hidden", "true");
-      control.after(text);
-    }
-    text.textContent = control.value;
-  }
+  renderDocument(previewDraft || readDraft());
 }
 
 document.querySelector("#save-pdf").addEventListener("click", () => {
@@ -232,6 +223,7 @@ document.querySelector("#save-pdf").addEventListener("click", () => {
   window.print();
 });
 window.addEventListener("beforeprint", preparePrint);
+document.querySelector("#print-estimate").addEventListener("click", () => { preparePrint(); window.print(); });
 
 function todayValue() {
   const today = new Date();
@@ -246,11 +238,12 @@ function readDraft() {
     }
     return [readItem(row)];
   });
-  return { version: 1, fields, positions, catalogId: currentCatalogId };
+  return { version: 1, fields, positions, catalogId: currentCatalogId, newEstimateBaseline };
 }
 
 function saveDraft() {
   if (isInitializing) return;
+  updateSaveButton();
   const status = document.querySelector("#draft-status");
   try {
     window.localStorage.setItem(draftKey, JSON.stringify(readDraft()));
@@ -270,6 +263,7 @@ function restoreDraft() {
     }
     for (const id of fieldIds) document.getElementById(id).value = draft.fields[id];
     currentCatalogId = catalog.some(record => record.id === draft.catalogId) ? draft.catalogId : null;
+    newEstimateBaseline = typeof draft.newEstimateBaseline === "string" ? draft.newEstimateBaseline : emptyFingerprint(draft.fields["estimate-number"], draft.fields["estimate-date"]);
     for (const position of draft.positions) addItem(false, position);
     updateCurrency();
     return true;
@@ -290,19 +284,14 @@ function resetEstimate(number) {
   currencyInput.value = "₸";
   items.replaceChildren();
   addItem(false);
+  newEstimateBaseline = estimateFingerprint(readDraft());
+  saveDraft();
 }
 
 document.querySelector("#new-estimate").addEventListener("click", () => {
-  if (!window.confirm("Создать новую смету? Текущий черновик будет заменён пустой сметой.")) return;
-  const current = document.querySelector("#estimate-number").value.trim();
-  // Сохраняем префикс и ведущие нули, например КП-009 → КП-010.
-  const nextNumber = /\d+$/.test(current)
-    ? current.replace(/\d+$/, digits => String(BigInt(digits) + 1n).padStart(digits.length, "0"))
-    : "1";
-  resetEstimate(nextNumber);
-  clearCopyFeedback();
-  document.querySelector("#sender").focus();
+  startNewEstimate();
 });
+document.querySelector("#create-estimate").addEventListener("click", startNewEstimate);
 
 function buildShareText() {
   recalculate();
@@ -374,6 +363,23 @@ function isValidEstimate(draft) {
       && ["шт", "час", "услуга", "м"].includes(row.unit)));
 }
 
+function estimateFingerprint(draft) {
+  // Сравниваем содержимое, не учитывая служебный ID записи каталога.
+  return JSON.stringify([
+    fieldIds.map(field => draft.fields[field]),
+    draft.positions.map(row => rowFields.map(field => row[field])),
+  ]);
+}
+
+function updateSaveButton() {
+  const button = document.querySelector("#save-estimate");
+  const saved = catalog.find(record => record.id === currentCatalogId);
+  const unchanged = saved && estimateFingerprint(saved.draft) === estimateFingerprint(readDraft());
+  if (button.hidden && !unchanged) document.querySelector("#catalog-save-status").textContent = "";
+  button.textContent = saved ? "Сохранить изменения" : "Сохранить смету";
+  button.hidden = Boolean(unchanged);
+}
+
 function loadCatalog() {
   catalogUnavailable = true;
   const raw = window.localStorage.getItem(catalogKey);
@@ -407,6 +413,7 @@ document.querySelector("#save-estimate").addEventListener("click", () => {
     loadCatalog();
     const draft = readDraft();
     delete draft.catalogId;
+    delete draft.newEstimateBaseline;
     const existing = catalog.find(record => record.id === currentCatalogId);
     const now = catalog.reduce((time, record) => Math.max(time, record.updatedAt + 1), Date.now());
     const id = existing ? existing.id : "estimate-" + now;
@@ -416,11 +423,18 @@ document.querySelector("#save-estimate").addEventListener("click", () => {
     catalog = next;
     currentCatalogId = id;
     saveDraft();
-    status.textContent = existing ? "Смета обновлена в каталоге." : "Смета сохранена в каталоге.";
+    status.textContent = "Смета успешно сохранена";
+    if (!document.querySelector("#estimate-catalog").hidden) renderCatalog();
+    if (document.activeElement === document.querySelector("#save-estimate")) document.querySelector("#new-estimate").focus();
   } catch {
     status.textContent = "Не удалось сохранить смету в каталог: хранилище недоступно, заполнено или каталог повреждён.";
   }
 });
+
+function hasCatalogQuery() {
+  return ["catalog-client", "catalog-number", "catalog-date", "catalog-from", "catalog-to"]
+    .some(id => document.getElementById(id).value.trim() !== "");
+}
 
 function filteredEstimates() {
   const normalize = value => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
@@ -441,6 +455,7 @@ function filteredEstimates() {
     let order = 0;
     if (sort.startsWith("date-")) order = a.draft.fields["estimate-date"].localeCompare(b.draft.fields["estimate-date"]);
     if (sort.startsWith("number-")) order = collator.compare(a.draft.fields["estimate-number"], b.draft.fields["estimate-number"]);
+    if (sort.startsWith("client-")) order = collator.compare(a.draft.fields.recipient.trim(), b.draft.fields.recipient.trim());
     if (sort.startsWith("total-")) order = estimateTotal(a.draft) - estimateTotal(b.draft);
     if (sort.endsWith("-desc")) order = -order;
     return order || b.createdAt - a.createdAt;
@@ -448,6 +463,7 @@ function filteredEstimates() {
 }
 
 function renderCatalog() {
+  document.querySelector("#catalog-results").hidden = true;
   if (catalogUnavailable) {
     document.querySelector("#catalog-items").replaceChildren();
     document.querySelector("#catalog-empty").hidden = true;
@@ -477,16 +493,29 @@ function renderCatalog() {
     open.setAttribute("aria-label", "Открыть смету № " + (fields["estimate-number"] || "без номера"));
     open.addEventListener("click", () => openEstimate(record.id));
     cell.append(open);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "add-button";
+    remove.textContent = "Удалить";
+    remove.setAttribute("aria-label", "Удалить смету № " + (fields["estimate-number"] || "без номера"));
+    remove.addEventListener("click", () => deleteEstimate(record.id));
+    cell.append(remove);
     row.append(cell);
     body.append(row);
   }
+  const hasQuery = hasCatalogQuery();
+  document.querySelector("#catalog-results").hidden = rows.length === 0;
+  document.querySelector("#catalog-empty").textContent = "Сметы не найдены";
   document.querySelector("#catalog-empty").hidden = rows.length !== 0;
-  document.querySelector("#catalog-count").textContent = "Найдено: " + rows.length;
+  document.querySelector("#catalog-count").textContent = (hasQuery ? "Найдено: " : "Всего смет: ") + rows.length;
   document.querySelector("#catalog-status").textContent = document.querySelector("#catalog-from").value > document.querySelector("#catalog-to").value
     && document.querySelector("#catalog-to").value ? "Дата «От» должна быть не позже даты «До»." : "";
 }
 
 function showEditor() {
+  previewDraft = null;
+  previewRecordId = null;
+  document.querySelector("#document-view").hidden = true;
   document.querySelector("#estimate-catalog").hidden = true;
   document.querySelector("#estimate-editor").hidden = false;
   document.querySelector("#show-catalog").focus();
@@ -497,19 +526,13 @@ function openEstimate(id) {
     loadCatalog();
     const record = catalog.find(item => item.id === id);
     if (!record) throw new Error("Смета не найдена");
-    if (!window.confirm("Открыть выбранную смету? Текущий черновик будет заменён. Несохранённые в каталоге изменения будут потеряны.")) return;
-    isInitializing = true;
-    try {
-      items.replaceChildren();
-      for (const field of fieldIds) document.getElementById(field).value = record.draft.fields[field];
-      currentCatalogId = record.id;
-      for (const position of record.draft.positions) addItem(false, position);
-      updateCurrency();
-    } finally { isInitializing = false; }
-    clearCopyFeedback();
-    saveDraft();
-    document.querySelector("#catalog-save-status").textContent = "Смета открыта из каталога. Для сохранения правок нажмите «Сохранить смету».";
-    showEditor();
+    previewDraft = JSON.parse(JSON.stringify(record.draft));
+    previewRecordId = record.id;
+    renderDocument(previewDraft);
+    document.querySelector("#estimate-editor").hidden = true;
+    document.querySelector("#estimate-catalog").hidden = true;
+    document.querySelector("#document-view").hidden = false;
+    document.querySelector("#estimate-document").focus();
   } catch {
     document.querySelector("#catalog-status").textContent = "Не удалось открыть смету: проверьте доступность хранилища и целостность каталога.";
   }
@@ -519,8 +542,15 @@ document.querySelector("#show-catalog").addEventListener("click", () => {
   if (pendingDuplicate) return;
   document.querySelector("#estimate-editor").hidden = true;
   document.querySelector("#estimate-catalog").hidden = false;
+  for (const id of ["catalog-client", "catalog-number", "catalog-date", "catalog-from", "catalog-to"]) document.getElementById(id).value = "";
+  document.querySelector("#catalog-sort").value = "number-asc";
+  for (const name of ["search", "sort"]) {
+    document.getElementById("catalog-" + name + "-panel").hidden = true;
+    document.getElementById("toggle-" + name).setAttribute("aria-expanded", "false");
+  }
   try { loadCatalog(); renderCatalog(); }
   catch {
+    document.querySelector("#catalog-results").hidden = true;
     document.querySelector("#catalog-items").replaceChildren();
     document.querySelector("#catalog-empty").hidden = true;
     document.querySelector("#catalog-count").textContent = "";
@@ -531,6 +561,228 @@ document.querySelector("#show-catalog").addEventListener("click", () => {
 document.querySelector("#close-catalog").addEventListener("click", showEditor);
 for (const eventName of ["input", "change"]) document.querySelector("#catalog-filters").addEventListener(eventName, renderCatalog);
 
+function nextFreeNumber(reference = document.querySelector("#estimate-number").value) {
+  const match = reference.trim().match(/^(.*?)(\d+)$/);
+  const prefix = match ? match[1] : "";
+  let largest = 0n;
+  let width = match ? match[2].length : 1;
+  const numbers = [...catalog.map(record => record.draft.fields["estimate-number"]), reference, document.querySelector("#estimate-number").value];
+  for (const number of numbers) {
+    const parts = number.trim().match(/^(.*?)(\d+)$/);
+    if (parts && parts[1] === prefix) {
+      const value = BigInt(parts[2]);
+      if (value > largest) largest = value;
+      width = Math.max(width, parts[2].length);
+    }
+  }
+  return prefix + String(largest + 1n).padStart(width, "0");
+}
+
+function emptyFingerprint(number, date) {
+  const fields = Object.fromEntries(fieldIds.map(id => [id, ""]));
+  Object.assign(fields, { "estimate-number": number, "estimate-date": date, "discount-rate": "0", "vat-rate": "0", currency: "₸" });
+  return estimateFingerprint({ fields, positions: [{ name: "", quantity: "", price: "", unit: "шт" }] });
+}
+
+function mayReplaceEditor() {
+  const draft = readDraft();
+  const saved = catalog.find(record => record.id === currentCatalogId);
+  const baseline = saved ? estimateFingerprint(saved.draft) : newEstimateBaseline || emptyFingerprint(draft.fields["estimate-number"], draft.fields["estimate-date"]);
+  return estimateFingerprint(draft) === baseline
+    || window.confirm("Есть несохранённые изменения. Продолжить и заменить текущую смету? Сначала сохраните её, если хотите оставить изменения.");
+}
+
+function startNewEstimate() {
+  if (pendingDuplicate) return;
+  try {
+    loadCatalog();
+    if (!mayReplaceEditor()) return;
+    resetEstimate(nextFreeNumber());
+    clearCopyFeedback();
+    showEditor();
+    document.querySelector("#sender").focus();
+  } catch {
+    document.querySelector("#catalog-save-status").textContent = "Не удалось определить свободный номер. Проверьте доступность и целостность каталога.";
+  }
+}
+
+for (const name of ["search", "sort"]) document.getElementById("toggle-" + name).addEventListener("click", () => {
+  const panel = document.getElementById("catalog-" + name + "-panel");
+  panel.hidden = !panel.hidden;
+  document.getElementById("toggle-" + name).setAttribute("aria-expanded", String(!panel.hidden));
+  if (!panel.hidden) document.getElementById(name === "search" ? "catalog-number" : "catalog-sort").focus();
+});
+
+function applyEstimate(draft, id = null) {
+  isInitializing = true;
+  try {
+    items.replaceChildren();
+    for (const field of fieldIds) document.getElementById(field).value = draft.fields[field];
+    currentCatalogId = id;
+    newEstimateBaseline = emptyFingerprint(draft.fields["estimate-number"], draft.fields["estimate-date"]);
+    for (const position of draft.positions) addItem(false, position);
+    updateCurrency();
+  } finally { isInitializing = false; }
+  clearCopyFeedback();
+  saveDraft();
+  showEditor();
+}
+
+function renderRepeatResults() {
+  repeatSelectedId = null;
+  document.querySelector("#repeat-confirm").disabled = true;
+  const body = document.querySelector("#repeat-results");
+  body.replaceChildren();
+  const query = document.querySelector("#repeat-number").value.trim().toLocaleLowerCase("ru-RU");
+  const matches = query ? catalog.filter(record => record.draft.fields["estimate-number"].toLocaleLowerCase("ru-RU").includes(query)) : [];
+  document.querySelector("#repeat-status").textContent = !query ? "Введите номер сметы" : matches.length ? "Выберите найденную смету" : "Сметы не найдены";
+  for (const record of matches) {
+    const label = document.createElement("label");
+    label.className = "repeat-choice";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "repeat-selection";
+    radio.value = record.id;
+    radio.addEventListener("change", () => {
+      repeatSelectedId = record.id;
+      document.querySelector("#repeat-confirm").disabled = false;
+    });
+    const description = document.createElement("span");
+    const fields = record.draft.fields;
+    description.textContent = "№ " + (fields["estimate-number"] || "—") + " · " + displayDate(fields["estimate-date"]) + " · " + (fields.recipient || "Без клиента") + " · " + documentMoney(estimateTotal(record.draft), fields.currency);
+    label.append(radio, description);
+    body.append(label);
+  }
+}
+
+document.querySelector("#repeat-estimate").addEventListener("click", () => {
+  if (pendingDuplicate) return;
+  document.querySelector("#repeat-number").value = "";
+  try { loadCatalog(); renderRepeatResults(); }
+  catch {
+    repeatSelectedId = null;
+    document.querySelector("#repeat-results").replaceChildren();
+    document.querySelector("#repeat-confirm").disabled = true;
+    document.querySelector("#repeat-status").textContent = "Не удалось загрузить каталог.";
+  }
+  document.querySelector("#repeat-dialog").showModal();
+  document.querySelector("#repeat-number").focus();
+});
+document.querySelector("#repeat-number").addEventListener("input", renderRepeatResults);
+document.querySelector("#repeat-cancel").addEventListener("click", () => document.querySelector("#repeat-dialog").close());
+document.querySelector("#repeat-confirm").addEventListener("click", () => {
+  try {
+    loadCatalog();
+    const record = catalog.find(item => item.id === repeatSelectedId);
+    if (!record) { renderRepeatResults(); return; }
+    if (!mayReplaceEditor()) return;
+    const draft = JSON.parse(JSON.stringify(record.draft));
+    draft.fields["estimate-number"] = nextFreeNumber(draft.fields["estimate-number"]);
+    draft.fields["estimate-date"] = todayValue();
+    document.querySelector("#repeat-dialog").close();
+    applyEstimate(draft);
+    document.querySelector("#catalog-save-status").textContent = "Создана новая копия. Нажмите «Сохранить смету», чтобы добавить её в каталог.";
+  } catch { document.querySelector("#repeat-status").textContent = "Не удалось повторить смету. Проверьте доступность каталога."; }
+});
+
+function deleteEstimate(id) {
+  try {
+    loadCatalog();
+    const record = catalog.find(item => item.id === id);
+    if (!record || !window.confirm("Удалить смету № " + (record.draft.fields["estimate-number"] || "без номера") + " из каталога?")) return;
+    const next = catalog.filter(item => item.id !== id);
+    window.localStorage.setItem(catalogKey, JSON.stringify({ version: 1, records: next }));
+    catalog = next;
+    if (currentCatalogId === id) { currentCatalogId = null; saveDraft(); }
+    renderCatalog();
+  } catch { document.querySelector("#catalog-status").textContent = "Не удалось удалить смету из каталога."; }
+}
+
+document.querySelector("#document-back").addEventListener("click", () => {
+  previewDraft = null;
+  previewRecordId = null;
+  document.querySelector("#document-view").hidden = true;
+  document.querySelector("#estimate-catalog").hidden = false;
+  try { loadCatalog(); renderCatalog(); } catch { renderCatalog(); }
+  document.querySelector("#catalog-title").focus();
+});
+document.querySelector("#document-print").addEventListener("click", () => { preparePrint(); window.print(); });
+document.querySelector("#document-edit").addEventListener("click", () => {
+  try {
+    loadCatalog();
+    const record = catalog.find(item => item.id === previewRecordId);
+    if (record && mayReplaceEditor()) applyEstimate(record.draft, record.id);
+  } catch { window.alert("Не удалось открыть смету для редактирования."); }
+});
+
+function displayDate(date) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.split("-").reverse().join(".") : "—";
+}
+
+function documentMoney(value, currency) {
+  return moneyFormatter.format(value).replace(/[\u00a0\u202f]/g, " ") + " " + currency;
+}
+
+function renderDocument(draft) {
+  const root = document.querySelector("#estimate-document");
+  root.replaceChildren();
+  const node = (tag, text, className) => {
+    const element = document.createElement(tag);
+    if (text !== undefined) element.textContent = text;
+    if (className) element.className = className;
+    return element;
+  };
+  const fields = draft.fields;
+  root.append(node("h1", "Смета № " + (fields["estimate-number"].trim() || "—") + " от " + displayDate(fields["estimate-date"])));
+  const details = node("dl", undefined, "document-details");
+  for (const [title, value] of [["От кого", fields.sender], ["Для кого", fields.recipient]]) {
+    const entry = node("div");
+    entry.append(node("dt", title), node("dd", value));
+    details.append(entry);
+  }
+  root.append(details);
+  const table = node("table", undefined, "document-table");
+  const head = node("thead");
+  const headings = node("tr");
+  for (const title of ["Наименование", "Количество", "Единица", "Цена, " + fields.currency, "Сумма"]) {
+    const th = node("th", title);
+    th.scope = "col";
+    headings.append(th);
+  }
+  head.append(headings);
+  const body = node("tbody");
+  let subtotal = 0;
+  const number = value => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 20 }).format(parseNumber(value)).replace(/[\u00a0\u202f]/g, " ");
+  for (const position of draft.positions) {
+    const amount = roundAmount(parseNumber(position.quantity) * parseNumber(position.price));
+    subtotal = roundAmount(subtotal + amount);
+    const row = node("tr");
+    for (const value of [position.name, number(position.quantity), position.unit, number(position.price), documentMoney(amount, fields.currency)]) row.append(node("td", value));
+    body.append(row);
+  }
+  table.append(head, body);
+  root.append(table);
+  const discount = roundAmount(subtotal * (Math.min(100, parseNumber(fields["discount-rate"])) / 100));
+  const discounted = roundAmount(subtotal - discount);
+  const vat = roundAmount(discounted * (parseNumber(fields["vat-rate"]) / 100));
+  const totals = node("dl", undefined, "document-totals");
+  for (const [title, amount] of [["Сумма", subtotal], ["Скидка", discount], ["Сумма со скидкой", discounted], ["НДС", vat], ["Итого к оплате", estimateTotal(draft)]]) {
+    if (amount === 0 && ["Скидка", "Сумма со скидкой", "НДС"].includes(title)) continue;
+    const entry = node("div", undefined, title === "Итого к оплате" ? "document-grand-total" : "");
+    entry.append(node("dt", title), node("dd", documentMoney(amount, fields.currency)));
+    totals.append(entry);
+  }
+  root.append(totals, node("h2", "Комментарий"), node("p", fields.comment, "document-comment"), node("p", "Подпись ____________________", "document-signature"));
+}
+
+window.addEventListener("storage", event => {
+  if (event.key !== catalogKey && event.key !== null) return;
+  try { loadCatalog(); } catch { /* Сообщение выводит renderCatalog. */ }
+  updateSaveButton();
+  if (!document.querySelector("#estimate-catalog").hidden) renderCatalog();
+});
+
 try { loadCatalog(); } catch { /* Ошибка каталога не мешает работе с черновиком. */ }
-if (!restoreDraft()) resetEstimate("1");
+if (!restoreDraft()) resetEstimate(catalogUnavailable ? "1" : nextFreeNumber());
 isInitializing = false;
+updateSaveButton();
