@@ -9,11 +9,13 @@
 </head>
 <body>
   <main class="container">
+    <div id="estimate-editor">
     <h1 id="print-title" class="print-only"></h1>
     <header class="page-header">
       <span class="eyebrow">ПРОСТО И ПО ДЕЛУ</span>
       <h1>Смета за 5 минут</h1>
       <p>Добавьте позиции — суммы и итог рассчитаются автоматически.</p>
+      <button type="button" id="show-catalog" class="add-button catalog-entry">Каталог смет</button>
     </header>
 
     <section class="card" aria-labelledby="details-title">
@@ -73,25 +75,76 @@
     </section>
     <p class="print-only signature">Подпись ____________________</p>
     <div class="print-actions">
-      <button type="button" id="new-estimate" class="add-button">Новая смета</button>
+      <button type="button" id="save-estimate" class="add-button">Сохранить смету</button>
+      <button type="button" id="new-estimate" class="add-button" title="Очистить смету и увеличить её номер">Очистить</button>
       <button type="button" id="copy-whatsapp" class="add-button">Скопировать для WhatsApp</button>
       <button type="button" id="save-pdf" class="print-button">Сохранить PDF</button>
       <p>В окне печати выберите «Сохранить как PDF».</p>
     </div>
     <p id="copy-status" class="copy-status screen-only" role="status" aria-live="polite"></p>
+    <p id="catalog-save-status" class="catalog-message screen-only" role="status"></p>
     <section id="copy-fallback" class="card copy-fallback screen-only" hidden>
       <label for="share-text">Скопируйте текст вручную</label>
       <p id="copy-help">Автоматическое копирование недоступно. Выделите текст и скопируйте его через Ctrl+C или меню телефона.</p>
       <textarea id="share-text" rows="9" readonly aria-describedby="copy-help"></textarea>
     </section>
     <p id="draft-status" class="privacy-note" role="status">Черновик сохраняется в этом браузере. Данные никуда не отправляются.</p>
+    </div>
+
+    <section id="estimate-catalog" class="screen-only" hidden aria-labelledby="catalog-title">
+      <header class="page-header">
+        <span class="eyebrow">СОХРАНЁННЫЕ ДОКУМЕНТЫ</span>
+        <h1 id="catalog-title" tabindex="-1">Каталог смет</h1>
+        <p>Сохраняйте сметы кнопкой «Сохранить смету». Все документы хранятся в этом браузере.</p>
+        <button type="button" id="close-catalog" class="add-button catalog-entry">← Вернуться к смете</button>
+      </header>
+      <div class="card">
+        <div id="catalog-filters" class="catalog-filters">
+          <label>По клиенту<input type="search" id="catalog-client" placeholder="Название или его часть"></label>
+          <label>По номеру сметы<input type="search" id="catalog-number" placeholder="Номер или его часть"></label>
+          <label>Конкретная дата<input type="date" id="catalog-date"></label>
+          <label>Дата от<input type="date" id="catalog-from"></label>
+          <label>Дата до<input type="date" id="catalog-to"></label>
+          <label>Сортировка<select id="catalog-sort">
+            <option value="newest">Сначала новые</option>
+            <option value="date-desc">Дата: сначала поздние</option>
+            <option value="date-asc">Дата: сначала ранние</option>
+            <option value="number-asc">Номер: по возрастанию</option>
+            <option value="number-desc">Номер: по убыванию</option>
+            <option value="total-asc">Сумма: по возрастанию</option>
+            <option value="total-desc">Сумма: по убыванию</option>
+          </select></label>
+        </div>
+        <p class="catalog-help">Фильтры работают вместе. Суммы сортируются по числовому значению без пересчёта валют.</p>
+        <p id="catalog-status" class="catalog-message" role="status" aria-live="polite"></p>
+        <p id="catalog-count" class="catalog-help" role="status" aria-live="polite"></p>
+        <div class="catalog-table-scroll" role="region" aria-label="Сохранённые сметы" tabindex="0">
+          <table class="catalog-table">
+            <caption class="sr-only">Каталог сохранённых смет</caption>
+            <thead><tr><th scope="col">№ сметы</th><th scope="col">Дата</th><th scope="col">Для кого</th><th scope="col">Сумма</th><th scope="col">Действия</th></tr></thead>
+            <tbody id="catalog-items"></tbody>
+          </table>
+        </div>
+        <p id="catalog-empty" class="catalog-empty" hidden>Сметы не найдены</p>
+      </div>
+    </section>
   </main>
+
+  <dialog id="duplicate-dialog" class="duplicate-dialog screen-only" aria-labelledby="duplicate-title" aria-describedby="duplicate-description">
+    <div class="warning-icon" aria-hidden="true">⚠</div>
+    <h2 id="duplicate-title">Такая позиция уже существует в смете</h2>
+    <p id="duplicate-description">Внимание! Такая позиция уже добавлена в смету.</p>
+    <div class="duplicate-actions">
+      <button type="button" id="duplicate-cancel" class="add-button" autofocus>Отменить</button>
+      <button type="button" id="duplicate-accept" class="print-button">Всё равно добавить</button>
+    </div>
+  </dialog>
 
   <template id="item-template">
     <tr class="item-row">
       <td data-label="Наименование"><input type="text" data-field="name" aria-label="Наименование" placeholder="Товар или услуга"></td>
       <td data-label="Количество"><input type="text" data-field="quantity" aria-label="Количество" inputmode="decimal" placeholder="0" autocomplete="off" spellcheck="false"></td>
-      <td data-label="Единица"><select data-field="unit" aria-label="Единица"><option value="шт">шт</option><option value="час">час</option><option value="услуга">услуга</option></select></td>
+      <td data-label="Единица"><select data-field="unit" aria-label="Единица"><option value="шт">шт</option><option value="час">час</option><option value="услуга">услуга</option><option value="м">м</option></select></td>
       <td data-label="Цена, ₸"><input type="text" data-field="price" aria-label="Цена, ₸" inputmode="decimal" placeholder="0" autocomplete="off" spellcheck="false"></td>
       <td data-label="Сумма" class="line-amount"><output data-field="amount">0 ₸</output></td>
       <td class="remove-cell"><button type="button" class="remove-button" aria-label="Удалить позицию" title="Удалить позицию">✕</button></td>
